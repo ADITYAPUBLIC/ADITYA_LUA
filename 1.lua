@@ -1904,70 +1904,97 @@ end
 
 _G._SetupSkinTimer()
 
--- ==================== WALLHACK ====================
-local function ApplyWallHack(localPlayer, enemy, pc)
-    if not _G.CheatsEnabled then return end
+-- ==================== WALL HACK ====================
+local function ApplyWallhack(enemy, pc)
     if not slua.isValid(enemy) then return end
-    local meshes = {}
     pcall(function()
+        local meshes = {}
         if slua.isValid(enemy.Mesh) then table.insert(meshes, enemy.Mesh) end
-        local SkelClass = import("SkeletalMeshComponent")
-        if SkelClass then
-            local childs = enemy:GetComponentsByClass(SkelClass)
-            if childs then
-                local count = type(childs.Num) == "function" and childs:Num() or #childs
-                for c = 1, count do
-                    local comp = type(childs.Get) == "function" and childs:Get(c-1) or childs[c]
-                    if slua.isValid(comp) and comp ~= enemy.Mesh then table.insert(meshes, comp) end
-                end
-            end
-        end
-    end)
-    pcall(function()
-        for _, comp in ipairs(meshes) do
-            if slua.isValid(comp) then
-                local ok, mat = pcall(function() return comp:GetMaterial(0) end)
-                if ok and slua.isValid(mat) then
-                    local ok2, base = pcall(function() return mat:GetBaseMaterial() end)
-                    if ok2 and slua.isValid(base) then
-                        base.bDisableDepthTest = true; base.BlendMode = 2
+        pcall(function()
+            local SkelClass = import("SkeletalMeshComponent")
+            if SkelClass then
+                local childs = enemy:GetComponentsByClass(SkelClass)
+                if childs then
+                    local count = type(childs.Num) == "function" and childs:Num() or #childs
+                    for c = 1, count do
+                        local comp = type(childs.Get) == "function" and childs:Get(c-1) or childs[c]
+                        if slua.isValid(comp) and comp ~= enemy.Mesh then table.insert(meshes, comp) end
                     end
                 end
-                comp.UseScopeDistanceCulling = false
-                comp.PrimitiveShadingStrategy = 1; comp.ShadingRate = 6
             end
-        end
+        end)
         local isVisible = false
-        if slua.isValid(pc) and slua.isValid(enemy) and type(pc.LineOfSightTo) == "function" then
+        if slua.isValid(pc) and type(pc.LineOfSightTo) == "function" then
             pcall(function() isVisible = pc:LineOfSightTo(enemy) end)
         end
-        local finalColor = isVisible and {R=1,G=25,B=25,A=1} or {R=25,G=1,B=25,A=1}
-        local scale = {R=3,G=3,B=0,A=0}
-        enemy._WH_MIDs = enemy._WH_MIDs or {}
+        -- Red = visible (in front), Cyan = hidden (behind wall)
+        local finalColor = isVisible
+            and {R=25.0, G=0.0, B=0.0, A=1.0, r=25.0, g=0.0, b=0.0, a=1.0}
+            or  {R=0.0, G=25.0, B=25.0, A=1.0, r=0.0, g=25.0, b=25.0, a=1.0}
+        local scale = {R=3.0, G=3.0, B=0.0, A=0.0, r=3.0, g=3.0, b=0.0, a=0.0}
+        local blendMode = 2
+        enemy.WH_MIDs = enemy.WH_MIDs or {}
+        local stateChanged = (enemy.WH_LastColorR ~= finalColor.R) or (enemy.WH_LastBlendMode ~= blendMode)
         for _, comp in ipairs(meshes) do
             if slua.isValid(comp) then
-                local ck = tostring(comp)
-                enemy._WH_MIDs[ck] = enemy._WH_MIDs[ck] or {}
-                for i = 0, 10 do
-                    local ok3, mi = pcall(function() return comp:GetMaterial(i) end)
-                    if not ok3 or not slua.isValid(mi) then break end
-                    local mid = enemy._WH_MIDs[ck][i]
-                    if not slua.isValid(mid) then
-                        local ok4, nm = pcall(function() return comp:CreateAndSetMaterialInstanceDynamic(i) end)
-                        if ok4 and slua.isValid(nm) then enemy._WH_MIDs[ck][i] = nm; mid = nm end
+                pcall(function()
+                    comp.UseScopeDistanceCulling = false
+                    comp.PrimitiveShadingStrategy = 1
+                    comp.ShadingRate = 6
+                    local s, matInterface = pcall(function() return comp:GetMaterial(0) end)
+                    if s and slua.isValid(matInterface) then
+                        local s2, baseMat = pcall(function() return matInterface:GetBaseMaterial() end)
+                        if s2 and slua.isValid(baseMat) then
+                            if baseMat.bDisableDepthTest ~= true then baseMat.bDisableDepthTest = true end
+                            if baseMat.BlendMode ~= blendMode then baseMat.BlendMode = blendMode end
+                        end
                     end
-                    if slua.isValid(mid) then
+                end)
+                local compKey = tostring(comp)
+                enemy.WH_MIDs[compKey] = enemy.WH_MIDs[compKey] or {}
+                for i = 0, 10 do
+                    local s, matInterface = pcall(function() return comp:GetMaterial(i) end)
+                    if not s or not slua.isValid(matInterface) then break end
+                    local currentCached = enemy.WH_MIDs[compKey][i]
+                    local isNewMID = false
+                    local needCacheUpdate = false
+                    if not slua.isValid(currentCached) then
+                        local s2, newMid = pcall(function() return comp:CreateAndSetMaterialInstanceDynamic(i) end)
+                        if s2 and slua.isValid(newMid) then
+                            enemy.WH_MIDs[compKey][i] = newMid
+                            currentCached = newMid
+                            isNewMID = true
+                            needCacheUpdate = true
+                        end
+                    else
+                        if matInterface ~= currentCached then
+                            pcall(function() comp:SetMaterial(i, currentCached) end)
+                            needCacheUpdate = true
+                        end
+                    end
+                    if slua.isValid(currentCached) and (stateChanged or isNewMID or needCacheUpdate) then
                         pcall(function()
-                            mid:SetVectorParameterValue("颜色", finalColor)
-                            mid:SetVectorParameterValue("Color", finalColor)
-                            mid:SetVectorParameterValue("BaseColor", finalColor)
-                            mid:SetVectorParameterValue("BodyColor", finalColor)
-                            mid:SetVectorParameterValue("DiffuseColor", finalColor)
-                            mid:SetVectorParameterValue("ParaScaleOffset", scale)
+                            currentCached:SetVectorParameterValue("颜色", finalColor)
+                            currentCached:SetVectorParameterValue("Extra Light Color", finalColor)
+                            currentCached:SetVectorParameterValue("Para_Color", finalColor)
+                            currentCached:SetVectorParameterValue("Para_ColorTint", finalColor)
+                            currentCached:SetVectorParameterValue("Para_Color_1", finalColor)
+                            currentCached:SetVectorParameterValue("Tint", finalColor)
+                            currentCached:SetVectorParameterValue("Color", finalColor)
+                            currentCached:SetVectorParameterValue("BaseColor", finalColor)
+                            currentCached:SetVectorParameterValue("BodyColor", finalColor)
+                            currentCached:SetVectorParameterValue("MainColor", finalColor)
+                            currentCached:SetVectorParameterValue("DiffuseColor", finalColor)
+                            currentCached:SetVectorParameterValue("EmissiveColor", finalColor)
+                            currentCached:SetVectorParameterValue("ParaScaleOffset", scale)
                         end)
                     end
                 end
             end
+        end
+        if stateChanged then
+            enemy.WH_LastColorR = finalColor.R
+            enemy.WH_LastBlendMode = blendMode
         end
     end)
 end
