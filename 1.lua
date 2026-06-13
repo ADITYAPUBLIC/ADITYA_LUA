@@ -2245,9 +2245,9 @@ _G.Magic = function()
         if not allChars then return end
         
         _G._MBones = _G._MBones or {}
-        local levelToScale = { [90] = 1.5, [120] = 2.0, [180] = 3.0 }
+        local levelToScale = { [90] = 1.2, [120] = 1.4, [180] = 1.6 }
         local magicLevel = _G.LexusConfig.MagicLevel or 90
-        local scaleMultiplier = levelToScale[magicLevel] or 1.5
+        local scaleMultiplier = levelToScale[magicLevel] or 1.2
 
         for _, enemy in pairs(allChars) do
             pcall(function()
