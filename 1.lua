@@ -2873,13 +2873,12 @@ local function ApplyHardAimbot()
         -- Use slider value to adjust aimbot strength (0-100)
         local strengthMul = (_G.Mod_AimbotStrength or 50) / 100
         
-        entity.GameDeviationFactor = 0.2
+        entity.GameDeviationFactor = 0.1
         entity.SwitchFromIdleToBackpackTime = 0.15
         entity.SwitchFromBackpackToIdleTime = 0.15
-        entity.RecoilKickADS = 0.1
-        entity.AnimationKick = 0.2
-        entity.AccessoriesVRecoilFactor = 0.5
-        entity.AccessoriesHRecoilFactor = 0.30
+        entity.RecoilKickADS = 0.2
+        entity.AccessoriesVRecoilFactor = 0.30
+        entity.AccessoriesHRecoilFactor = 0.48
         entity.ExtraHitPerformScale = 50
         if entity.AutoAimingConfig then
             for _, range in ipairs({"OuterRange", "InnerRange"}) do
