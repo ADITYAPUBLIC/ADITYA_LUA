@@ -1,3 +1,16 @@
+-- Per-match guard: allow re-init when the player controller changes (new match)
+do
+    local hud = slua_GameFrontendHUD
+    if not hud then return end
+    local pc = hud:GetPlayerController()
+    if not pc then return end
+    local pawn = pc:GetCurPawn()
+    if not pawn then return end
+    if _G._MOD_LOADED and _G._MOD_PAWN == pawn then return end
+    _G._MOD_LOADED = true
+    _G._MOD_PAWN = pawn
+end
+
 -- ADITYA_ORG SRC DUMPED
 local M = {}
 
