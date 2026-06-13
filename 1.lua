@@ -43,6 +43,14 @@ if _G.Mod_Chams_YellowEnabled == nil then _G.Mod_Chams_YellowEnabled = false end
 if _G.Mod_Chams_GreenRGB == nil then _G.Mod_Chams_GreenRGB = {R=0, G=255, B=0, A=255} end
 if _G.Mod_Chams_YellowRGB == nil then _G.Mod_Chams_YellowRGB = {R=255, G=255, B=0, A=255} end
 
+-- Magic Bullet configuration
+if not _G.LexusConfig then
+    _G.LexusConfig = {
+        EnableMagic = false,
+        MagicLevel = 90   -- Low=90, Medium=120, Hard=180
+    }
+end
+
 local require = require
 local import  = import
 local isValid = slua.isValid
@@ -2208,6 +2216,173 @@ end
 
 _G._SetupSkinTimer()
 
+-- ==================== MAGIC BULLET (HITBOX SCALER) - LAG FIXED ====================
+-- No expiry date, caching per asset to avoid repeated heavy work
+_G.ResetHitbox = function()
+    _G._MBones = {}
+    pcall(function()
+        local allChars = Game:GetAllPlayerPawns() or {}
+        for _, enemy in pairs(allChars) do
+            if slua.isValid(enemy) and slua.isValid(enemy.Mesh) then
+                pcall(function() enemy.Mesh:RecreatePhysicsState() end)
+            end
+        end
+    end)
+end
+
+_G.Magic = function()
+    if not _G.LexusConfig.EnableMagic then
+        if _G._MBones and next(_G._MBones) ~= nil then
+            _G.ResetHitbox()
+        end
+        return
+    end
+
+    pcall(function()
+        local char = GameplayData.GetPlayerCharacter()
+        if not slua.isValid(char) then return end
+        local allChars = Game:GetAllPlayerPawns()
+        if not allChars then return end
+        
+        _G._MBones = _G._MBones or {}
+        local levelToScale = { [90] = 1.5, [120] = 2.0, [180] = 3.0 }
+        local magicLevel = _G.LexusConfig.MagicLevel or 90
+        local scaleMultiplier = levelToScale[magicLevel] or 1.5
+
+        for _, enemy in pairs(allChars) do
+            pcall(function()
+                if not slua.isValid(enemy) or enemy == char or enemy.TeamID == char.TeamID then
+                    return
+                end
+                
+                local mesh = enemy.Mesh
+                if not slua.isValid(mesh) then return end
+                
+                local physAsset = mesh.PhysicsAssetOverride
+                if not slua.isValid(physAsset) and slua.isValid(mesh.SkeletalMesh) then
+                    physAsset = mesh.SkeletalMesh.PhysicsAsset
+                end
+                if not slua.isValid(physAsset) then return end
+                
+                local assetName = tostring((physAsset.GetName and physAsset:GetName()) or physAsset)
+                if _G._MBones[assetName] then return end  -- Already processed this asset
+                
+                local setups = physAsset.SkeletalBodySetups
+                if not setups then return end
+
+                local bonePatterns = { "head", "neck", "spine" }
+                local numSetups = (type(setups.Num) == "function" and setups:Num()) or #setups
+                for i = 0, numSetups - 1 do
+                    local bs = (type(setups.Get) == "function" and setups:Get(i)) or setups[i+1]
+                    if bs and slua.isValid(bs) then
+                        local boneName = tostring(bs.BoneName):lower()
+                        local shouldScale = false
+                        for _, pattern in ipairs(bonePatterns) do
+                            if boneName:find(pattern) then
+                                shouldScale = true
+                                break
+                            end
+                        end
+                        if shouldScale then
+                            local ag = bs.AggGeom
+                            if ag then
+                                -- Scale BoxElems
+                                local boxElems = ag.BoxElems
+                                if boxElems then
+                                    local numBox = (type(boxElems.Num) == "function" and boxElems:Num()) or #boxElems
+                                    for idx = 0, numBox - 1 do
+                                        local elem = (type(boxElems.Get) == "function" and boxElems:Get(idx)) or boxElems[idx+1]
+                                        if elem then
+                                            elem.X = elem.X * scaleMultiplier
+                                            elem.Y = elem.Y * scaleMultiplier
+                                            elem.Z = elem.Z * scaleMultiplier
+                                            if type(boxElems.Set) == "function" then
+                                                boxElems:Set(idx, elem)
+                                            else
+                                                boxElems[idx+1] = elem
+                                            end
+                                        end
+                                    end
+                                end
+                                -- Scale SphylElems
+                                local sphylElems = ag.SphylElems
+                                if sphylElems then
+                                    local numSphyl = (type(sphylElems.Num) == "function" and sphylElems:Num()) or #sphylElems
+                                    for idx = 0, numSphyl - 1 do
+                                        local elem = (type(sphylElems.Get) == "function" and sphylElems:Get(idx)) or sphylElems[idx+1]
+                                        if elem then
+                                            if elem.Radius then elem.Radius = elem.Radius * scaleMultiplier end
+                                            if elem.Length then elem.Length = elem.Length * scaleMultiplier end
+                                            if type(sphylElems.Set) == "function" then
+                                                sphylElems:Set(idx, elem)
+                                            else
+                                                sphylElems[idx+1] = elem
+                                            end
+                                        end
+                                    end
+                                end
+                                -- Scale SphereElems
+                                local sphereElems = ag.SphereElems
+                                if sphereElems then
+                                    local numSphere = (type(sphereElems.Num) == "function" and sphereElems:Num()) or #sphereElems
+                                    for idx = 0, numSphere - 1 do
+                                        local elem = (type(sphereElems.Get) == "function" and sphereElems:Get(idx)) or sphereElems[idx+1]
+                                        if elem and elem.Radius then
+                                            elem.Radius = elem.Radius * scaleMultiplier
+                                            if type(sphereElems.Set) == "function" then
+                                                sphereElems:Set(idx, elem)
+                                            else
+                                                sphereElems[idx+1] = elem
+                                            end
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+
+                pcall(function()
+                    mesh:RecreatePhysicsState()
+                    mesh:WakeAllRigidBodies()
+                    mesh:UpdateBounds()
+                end)
+                
+                _G._MBones[assetName] = true
+            end)
+        end
+    end)
+end
+
+-- Timer to apply Magic Bullet every 1 second (lightweight because of caching)
+pcall(function()
+    if _G._MagicTimer then
+        pcall(function() if _G._MagicTimerPC and isValid(_G._MagicTimerPC) then _G._MagicTimerPC:RemoveGameTimer(_G._MagicTimer) end end)
+    end
+    local function MagicLoop()
+        pcall(_G.Magic)
+    end
+    local pc = slua_GameFrontendHUD and slua_GameFrontendHUD:GetPlayerController()
+    if pc and slua.isValid(pc) and pc.AddGameTimer then
+        _G._MagicTimerPC = pc
+        _G._MagicTimer = pc:AddGameTimer(1.0, true, MagicLoop)
+    else
+        -- fallback: try later
+        if not _G._MagicFallbackTimer then
+            _G._MagicFallbackTimer = Game:SetTimer(1.0, true, function()
+                local pc2 = slua_GameFrontendHUD and slua_GameFrontendHUD:GetPlayerController()
+                if pc2 and slua.isValid(pc2) and pc2.AddGameTimer then
+                    Game:ClearTimer(_G._MagicFallbackTimer)
+                    _G._MagicFallbackTimer = nil
+                    if _G._MagicTimer then pcall(function() if _G._MagicTimerPC and isValid(_G._MagicTimerPC) then _G._MagicTimerPC:RemoveGameTimer(_G._MagicTimer) end end) end
+                    _G._MagicTimerPC = pc2
+                    _G._MagicTimer = pc2:AddGameTimer(1.0, true, MagicLoop)
+                end
+            end)
+        end
+    end
+end)
+
 -- ==================== WALL HACK (UPDATED) ====================
 local function ApplyWallHack(localPlayer, enemy, pc)
     if not _G.CheatsEnabled then return end
@@ -2619,168 +2794,6 @@ end
 if _G.Mod_FPS165_Enabled ~= false then _G.Enable165FPSLogic() end
 if _G.Mod_iPadView_Enabled ~= false then _G.EnableiPadViewUI() end
 
--- ==================== MAGIC BULLET (HITBOX SCALER) ====================
-if not _G.LexusConfig then
-    _G.LexusConfig = {
-        EnableMagic = false,
-        MagicLevel = 90   -- Low=90, Medium=120, Hard=180
-    }
-end
-
-_G.ResetHitbox = function()
-    _G._MBones = {}
-    pcall(function()
-        local allChars = Game:GetAllPlayerPawns() or {}
-        for _, enemy in pairs(allChars) do
-            if slua.isValid(enemy) and slua.isValid(enemy.Mesh) then
-                pcall(function() enemy.Mesh:RecreatePhysicsState() end)
-            end
-        end
-    end)
-end
-
-_G.Magic = function()
-    local current_time = os.time()
-    local expire_time = os.time({year = 2026, month = 6, day = 14, hour = 17, min = 0, sec = 0})
-    if current_time >= expire_time then
-        return
-    end
-    if not _G.LexusConfig.EnableMagic then
-        if _G._MBones and next(_G._MBones) ~= nil then
-            _G.ResetHitbox()
-        end
-        return
-    end
-
-    pcall(function()
-        local char = GameplayData.GetPlayerCharacter()
-        if not slua.isValid(char) then
-            return
-        end
-        local allChars = Game:GetAllPlayerPawns()
-        if not allChars then
-            return
-        end
-        
-        _G._MBones = _G._MBones or {}
-        local levelToScale = { [90] = 1.5, [120] = 2.0, [180] = 3.0 }
-        local magicLevel = _G.LexusConfig.MagicLevel or 90
-        local scaleMultiplier = levelToScale[magicLevel] or 1.5
-
-        for _, enemy in pairs(allChars) do
-            pcall(function()
-                if not slua.isValid(enemy) or enemy == char or enemy.TeamID == char.TeamID then
-                    return
-                end
-                
-                local mesh = enemy.Mesh
-                if not slua.isValid(mesh) then
-                    return
-                end
-                
-                local physAsset = mesh.PhysicsAssetOverride
-                if not slua.isValid(physAsset) and slua.isValid(mesh.SkeletalMesh) then
-                    physAsset = mesh.SkeletalMesh.PhysicsAsset
-                end
-                if not slua.isValid(physAsset) then
-                    return
-                end
-                
-                local assetName = tostring((physAsset.GetName and physAsset:GetName()) or physAsset)
-                if _G._MBones[assetName] then
-                    return
-                end
-                
-                local setups = physAsset.SkeletalBodySetups
-                if not setups then
-                    return
-                end
-
-                local bonePatterns = { "head", "neck", "spine" }
-                local numSetups = (type(setups.Num) == "function" and setups:Num()) or #setups
-                for i = 0, numSetups - 1 do
-                    local bs = (type(setups.Get) == "function" and setups:Get(i)) or setups[i]
-                    if bs and slua.isValid(bs) then
-                        local boneName = tostring(bs.BoneName):lower()
-                        local shouldScale = false
-                        for _, pattern in ipairs(bonePatterns) do
-                            if boneName:find(pattern) then
-                                shouldScale = true
-                                break
-                            end
-                        end
-                        if shouldScale then
-                            local ag = bs.AggGeom
-                            if ag then
-                                -- Scale BoxElems
-                                local boxElems = ag.BoxElems
-                                if boxElems then
-                                    local numBox = (type(boxElems.Num) == "function" and boxElems:Num()) or #boxElems
-                                    for idx = 0, numBox - 1 do
-                                        local elem = (type(boxElems.Get) == "function" and boxElems:Get(idx)) or boxElems[idx]
-                                        if elem then
-                                            elem.X = elem.X * scaleMultiplier
-                                            elem.Y = elem.Y * scaleMultiplier
-                                            elem.Z = elem.Z * scaleMultiplier
-                                            if type(boxElems.Set) == "function" then
-                                                boxElems:Set(idx, elem)
-                                            else
-                                                boxElems[idx] = elem
-                                            end
-                                        end
-                                    end
-                                end
-                                -- Scale SphylElems
-                                local sphylElems = ag.SphylElems
-                                if sphylElems then
-                                    local numSphyl = (type(sphylElems.Num) == "function" and sphylElems:Num()) or #sphylElems
-                                    for idx = 0, numSphyl - 1 do
-                                        local elem = (type(sphylElems.Get) == "function" and sphylElems:Get(idx)) or sphylElems[idx]
-                                        if elem then
-                                            if elem.Radius then elem.Radius = elem.Radius * scaleMultiplier end
-                                            if elem.Length then elem.Length = elem.Length * scaleMultiplier end
-                                            if type(sphylElems.Set) == "function" then
-                                                sphylElems:Set(idx, elem)
-                                            else
-                                                sphylElems[idx] = elem
-                                            end
-                                        end
-                                    end
-                                end
-                                -- Scale SphereElems
-                                local sphereElems = ag.SphereElems
-                                if sphereElems then
-                                    local numSphere = (type(sphereElems.Num) == "function" and sphereElems:Num()) or #sphereElems
-                                    for idx = 0, numSphere - 1 do
-                                        local elem = (type(sphereElems.Get) == "function" and sphereElems:Get(idx)) or sphereElems[idx]
-                                        if elem and elem.Radius then
-                                            elem.Radius = elem.Radius * scaleMultiplier
-                                            if type(sphereElems.Set) == "function" then
-                                                sphereElems:Set(idx, elem)
-                                            else
-                                                sphereElems[idx] = elem
-                                            end
-                                        end
-                                    end
-                                end
-                            end
-                        end
-                    end
-                end
-
-                pcall(function()
-                    mesh:RecreatePhysicsState()
-                    mesh:WakeAllRigidBodies()
-                    mesh:UpdateBounds()
-                end)
-                
-                _G._MBones[assetName] = true
-            end)
-        end
-    end)
-end
-
--- The main 0.1s timer for features
 local pc = slua_GameFrontendHUD:GetPlayerController()
 if isValid(pc) and pc.AddGameTimer and pc ~= _G._FeaturesTimerPC then
   _G._FeaturesTimerPC = pc
@@ -2831,94 +2844,6 @@ if isValid(pc) and pc.AddGameTimer and pc ~= _G._FeaturesTimerPC then
         end
         -- Always apply Black Sky setting (on/off)
         _G.ApplyBlackSky()
-      end
-
-      -- Magic Bullet (Hitbox Scaler) – new system
-      if _G.LexusConfig and _G.LexusConfig.EnableMagic then
-          _G.Magic()
-      else
-          -- Original hardcoded hitbox scaler (kept intact)
-          pcall(function()
-              local allChars = Game:GetAllPlayerPawns() or {}
-              for _, c in pairs(allChars) do
-                  if isValid(c) and c ~= char and c.TeamID ~= char.TeamID then
-                      local mesh = c.Mesh
-                      if isValid(mesh) then
-                          local physAsset = mesh.PhysicsAssetOverride
-                          if not isValid(physAsset) and isValid(mesh.SkeletalMesh) then
-                              physAsset = mesh.SkeletalMesh.PhysicsAsset
-                          end
-                          if isValid(physAsset) and physAsset.SkeletalBodySetups then
-                              _G._MBones = _G._MBones or {}
-                              local assetName = (physAsset.GetName and physAsset:GetName()) or tostring(physAsset)
-                              if not _G._MBones[assetName] then
-                                  local mb = {
-                                      ["head"]=50, ["neck_01"]=40, ["pelvis"]=40,
-                                      ["spine_01"]=40, ["spine_02"]=40, ["spine_03"]=40,
-                                      ["upperarm_l"]=30, ["upperarm_r"]=30,
-                                      ["lowerarm_l"]=25, ["lowerarm_r"]=25,
-                                      ["hand_l"]=20, ["hand_r"]=20,
-                                      ["thigh_l"]=30, ["thigh_r"]=30,
-                                      ["calf_l"]=25, ["calf_r"]=25,
-                                      ["foot_l"]=20, ["foot_r"]=20,
-                                  }
-                                  local setups = physAsset.SkeletalBodySetups
-                                  for i = 1, 80 do
-                                      local bs = nil
-                                      pcall(function() bs = (type(setups.Get)=="function") and setups:Get(i-1) or setups[i] end)
-                                      if not bs or not isValid(bs) then break end
-                                      local bn = tostring(bs.BoneName):lower()
-                                      local pct = nil
-                                      for pat, val in pairs(mb) do
-                                          if string.find(bn, pat) then pct = val; break end
-                                      end
-                                      if pct then
-                                          local sc = 1.0 + pct/100.0
-                                          local ag = bs.AggGeom
-                                          pcall(function()
-                                              local bx = (ag and ag.BoxElems) or bs.BoxElems
-                                              if bx then
-                                                  local b = (type(bx.Get)=="function") and bx:Get(0) or bx[1]
-                                                  if b then
-                                                      b.X = (b.X or 30)*sc; b.Y = (b.Y or 30)*sc; b.Z = (b.Z or 60)*sc
-                                                      if type(bx.Set)=="function" then bx:Set(0,b) else bx[1]=b end
-                                                      if ag then bs.AggGeom=ag else bs.BoxElems=bx end
-                                                  end
-                                              end
-                                          end)
-                                          pcall(function()
-                                              local sp = (ag and ag.SphylElems) or bs.SphylElems
-                                              if sp then
-                                                  local s = (type(sp.Get)=="function") and sp:Get(0) or sp[1]
-                                                  if s then
-                                                      if s.Radius then s.Radius=s.Radius*sc end
-                                                      if s.Length then s.Length=s.Length*sc end
-                                                      if type(sp.Set)=="function" then sp:Set(0,s) else sp[1]=s end
-                                                      if ag then bs.AggGeom=ag else bs.SphylElems=sp end
-                                                  end
-                                              end
-                                          end)
-                                          pcall(function()
-                                              local sr = (ag and ag.SphereElems) or bs.SphereElems
-                                              if sr then
-                                                  local r = (type(sr.Get)=="function") and sr:Get(0) or sr[1]
-                                                  if r and r.Radius then
-                                                      r.Radius=r.Radius*sc
-                                                      if type(sr.Set)=="function" then sr:Set(0,r) else sr[1]=r end
-                                                      if ag then bs.AggGeom=ag else bs.SphereElems=sr end
-                                                  end
-                                              end
-                                          end)
-                                      end
-                                  end
-                                  _G._MBones[assetName] = true
-                                  if mesh.RecreatePhysicsState then mesh:RecreatePhysicsState() end
-                              end
-                          end
-                      end
-                  end
-              end
-          end)
       end
     end)
   end)
@@ -3364,14 +3289,14 @@ pcall(function()
                         return true
                     end
                 },
-                -- Magic Bullet section
+                -- ========== MAGIC BULLET SECTION ==========
                 {
                     Key = "ModMenu_Magic_Ex",
                     UI = AliasMap.TitleSwitcher,
-                    Text = "BANGDE MAGIC BULLET",
+                    Text = "ADITYA MAGIC BULLET",
                     ExpandIndex = 0,
                     GetFunc = function() return _G.LexusConfig.EnableMagic end,
-                    SetFunc = function(c, v)
+                    SetFunc = function(_, v)
                         _G.LexusConfig.EnableMagic = v
                         _G.ResetHitbox()
                         return true
@@ -3383,7 +3308,7 @@ pcall(function()
                     Text = "   [ LEVEL: LOW ]",
                     ExpandHandle = "ModMenu_Magic_Ex",
                     GetFunc = function() return _G.LexusConfig.MagicLevel == 90 end,
-                    SetFunc = function(c, v)
+                    SetFunc = function(_, v)
                         if v then
                             _G.ResetHitbox()
                             _G.LexusConfig.MagicLevel = 90
@@ -3397,7 +3322,7 @@ pcall(function()
                     Text = "   [ LEVEL: MEDIUM ]",
                     ExpandHandle = "ModMenu_Magic_Ex",
                     GetFunc = function() return _G.LexusConfig.MagicLevel == 120 end,
-                    SetFunc = function(c, v)
+                    SetFunc = function(_, v)
                         if v then
                             _G.ResetHitbox()
                             _G.LexusConfig.MagicLevel = 120
@@ -3411,14 +3336,14 @@ pcall(function()
                     Text = "   [ LEVEL: HARD ]",
                     ExpandHandle = "ModMenu_Magic_Ex",
                     GetFunc = function() return _G.LexusConfig.MagicLevel == 180 end,
-                    SetFunc = function(c, v)
+                    SetFunc = function(_, v)
                         if v then
                             _G.ResetHitbox()
                             _G.LexusConfig.MagicLevel = 180
                         end
                         return true
                     end
-                },
+                }
             }
             
             SettingPageDefine.ModMenu = {
